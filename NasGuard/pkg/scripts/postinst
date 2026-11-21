@@ -1,0 +1,6 @@
+#!/bin/sh
+H=/var/packages/NasGuard/target/bin/nasguard-helper
+if [ ! -u "$H" ]; then
+  echo "权限助手未按预期设置（setuid 缺失），套件可能无法封禁 IP。" > "$SYNOPKG_TEMP_LOGFILE"
+fi
+exit 0

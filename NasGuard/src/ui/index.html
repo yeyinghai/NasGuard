@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NasGuard 登录守卫</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#1d2533;--sub:#6b7686;--line:#e4e8ee;--acc:#2f6fed;--bad:#d64545;--ok:#1f9d55}
+*{box-sizing:border-box}body{margin:0;font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink)}
+header{background:linear-gradient(120deg,#1e3a8a,#2f6fed);color:#fff;padding:18px 24px;display:flex;align-items:center;justify-content:space-between}
+header h1{margin:0;font-size:20px}header small{opacity:.8;margin-left:8px}
+nav{display:flex;gap:6px;padding:12px 24px;flex-wrap:wrap}nav button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 14px;cursor:pointer}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+main{padding:0 24px 40px;max-width:1100px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+.card h2{font-size:15px;margin:0 0 10px}
+table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}th{color:var(--sub);font-weight:500}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px 18px}
+label{display:block;color:var(--sub);font-size:12px;margin-bottom:3px}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:inherit}
+.chk{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:14px}
+.btn{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font:inherit}
+.btn.ghost{background:#fff;color:var(--acc);border:1px solid var(--acc)}.btn.red{background:var(--bad)}
+.tag{display:inline-block;border-radius:6px;padding:0 6px;font-size:12px}.t-fail{background:#fde8e8;color:var(--bad)}.t-ok{background:#e3f6ec;color:var(--ok)}.t-ban{background:#2b2f36;color:#fff}.t-unban{background:#eef1f5;color:var(--sub)}
+.msg{margin-left:10px;color:var(--sub)}.hide{display:none}
+#login{max-width:360px;margin:12vh auto}#login .card{padding:24px}
+.muted{color:var(--sub);font-size:12px}
+.run{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px #1f9d5522;display:inline-block;margin-right:6px}
+.dot.off{background:var(--bad);box-shadow:0 0 0 4px #d6454522}.run b{font-size:16px}.run .kv{color:var(--sub);font-size:12px}.run .kv span{color:var(--ink);font-size:13px;margin-left:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:12px 0}
+.tile{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px}.tile .n{font-size:26px;font-weight:600;line-height:1.2}.tile .l{color:var(--sub);font-size:12px}.tile .s{color:var(--sub);font-size:11px}
+.two{display:grid;grid-template-columns:2fr 1fr;gap:12px}@media(max-width:820px){.two{grid-template-columns:1fr}}
+.two .card{margin:0}.legend{font-size:12px;color:var(--sub)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px}
+.bar{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:13px}.bar .tr{flex:1;background:#eef1f5;border-radius:6px;height:10px;overflow:hidden}.bar .fl{height:100%;background:var(--bad)}
+svg text{font-size:10px;fill:#8a94a3}
+</style>
+</head>
+<body>
+<div id="deny" class="card hide" style="margin:40px auto;max-width:460px">需要 DSM 管理员身份。请从 DSM 主菜单打开 NasGuard（不要在新标签页单独打开）。</div>
+
+<div id="app" class="hide">
+<header style="padding:12px 20px"><div><h1>🛡️ NasGuard<small id="ver"></small></h1></div><div><span id="host"></span></div></header>
+<nav><button data-p="st" class="on">状态</button><button data-p="cf">设置</button><button data-p="ps">推送记录</button><button data-p="up">在线更新</button></nav>
+<main>
+<section id="p-st">
+ <div class="card run" id="run"></div>
+ <div class="tiles" id="tiles"></div>
+ <div class="two">
+  <div class="card"><h2>今日每小时登录 <span class="legend"><i style="background:#d64545"></i>失败<i style="background:#1f9d55"></i>成功</span></h2><div id="ch-h"></div></div>
+  <div class="card"><h2>今日失败来源</h2><div id="via"></div><h2 style="margin-top:14px">今日失败最多的 IP</h2><div id="top"></div></div>
+ </div>
+ <div class="card"><h2>近 7 天 <span class="legend"><i style="background:#d64545"></i>失败<i style="background:#1f9d55"></i>成功<i style="background:#2b2f36"></i>封禁</span></h2><div id="ch-d"></div></div>
+ <div class="card"><h2>当前封禁</h2>
+  <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><input id="bip" type="text" placeholder="手动封禁 IP" style="max-width:220px"><button class="btn" onclick="manualBan()">封禁</button><button class="btn ghost" onclick="unban('all')">全部解封</button><span id="bmsg" class="msg"></span></div>
+  <table><thead><tr><th>IP</th><th>归属地</th><th>剩余</th><th></th></tr></thead><tbody id="bans"></tbody></table></div>
+ <div class="card"><h2>最近事件 <span class="legend">最新 20 条</span></h2>
+  <table><thead><tr><th>时间</th><th>类型</th><th>IP</th><th>用户</th><th>途径</th></tr></thead><tbody id="ev"></tbody></table></div>
+</section>
+<section id="p-cf" class="hide">
+ <div class="card"><h2>Bark 推送</h2><div class="grid">
+  <div style="grid-column:1/-1"><label>Bark 地址（含 Key）</label><input id="bark_url" type="text"></div>
+  <div><label>分组</label><input id="group" type="text"></div>
+  <div><label>级别</label><select id="level"><option value="active">active</option><option value="timeSensitive">timeSensitive</option><option value="passive">passive</option><option value="critical">critical</option></select></div>
+  <div><label>铃声（可空）</label><input id="sound" type="text"></div>
+  <div><label>本机直连（自建 Bark 在本 NAS 时）</label><select id="bark_local"><option value="auto">自动</option><option value="on">总是</option><option value="off">关闭</option></select></div>
+  <div><label>主机名（可空，默认系统名）</label><input id="hostname" type="text"></div>
+ </div>
+ <div style="margin-top:12px"><button class="btn ghost" onclick="act('test')">测试推送</button><button class="btn ghost" style="margin-left:8px" onclick="act('report')">立即发送简报</button><span id="tmsg" class="msg"></span></div></div>
+ <div class="card"><h2>检测与封禁</h2><div class="grid">
+  <div><label>失败次数阈值</label><input id="threshold" type="number" min="1"></div>
+  <div><label>统计窗口（分钟）</label><input id="window" type="number" min="1"></div>
+  <div><label>同一 IP 告警冷却（分钟）</label><input id="cooldown" type="number" min="0"></div>
+  <div><label>封禁时长（分钟，0 为永久）</label><input id="ban_time" type="number" min="0"></div>
+  <div><label>内网前缀（不封禁）</label><input id="lan_prefix" type="text"></div>
+  <div style="grid-column:1/-1"><label>白名单（IP 或以 . 结尾的前缀，空格分隔）</label><input id="whitelist" type="text"></div>
+  <div class="chk"><input id="ban_enabled" type="checkbox">自动封禁</div>
+  <div class="chk"><input id="geo" type="checkbox">查询 IP 归属地</div>
+ </div></div>
+ <div class="card"><h2>通知</h2><div class="grid">
+  <div class="chk"><input id="notify_fail" type="checkbox">暴力破解告警</div>
+  <div class="chk"><input id="notify_ssh_ok" type="checkbox">SSH 登录成功</div>
+  <div class="chk"><input id="notify_web_ok" type="checkbox">DSM 网页登录成功</div>
+  <div class="chk"><input id="notify_lan_login" type="checkbox">内网登录也通知</div>
+ </div></div>
+ <div class="card"><h2>每日简报</h2><div class="grid">
+  <div class="chk"><input id="report_enabled" type="checkbox">开启</div>
+  <div><label>时</label><input id="report_hour" type="number" min="0" max="23"></div>
+  <div><label>分</label><input id="report_minute" type="number" min="0" max="59"></div>
+ </div></div>
+ <button class="btn" onclick="saveCfg()">保存设置</button><span id="cmsg" class="msg"></span>
+</section>
+<section id="p-ps" class="hide"><div class="card"><h2>最近推送</h2>
+ <table><thead><tr><th>时间</th><th>类型</th><th>结果</th><th>标题</th><th>内容</th></tr></thead><tbody id="pu"></tbody></table></div></section>
+<section id="p-up" class="hide">
+ <div class="card"><h2>版本</h2>
+  <div class="run" id="upinfo"></div>
+  <div style="margin-top:12px"><button class="btn ghost" onclick="upCheck()">检查更新</button><button class="btn" id="upbtn" style="margin-left:8px" onclick="upGo()">立即更新</button><span id="upmsg" class="msg"></span></div></div>
+ <div class="card"><h2>更新说明</h2><pre id="upnotes" class="muted" style="white-space:pre-wrap;margin:0">尚未检查</pre></div>
+ <div class="card"><h2>设置</h2><div class="grid">
+  <div><label>下载线路</label><select id="u_mirror"><option value="auto">自动（直连失败换镜像）</option><option value="direct">直连 GitHub</option><option value="ghfast">ghfast.top</option><option value="ghproxy">gh-proxy.com</option></select></div>
+  <div class="chk"><input id="u_notify" type="checkbox">发现新版本时 Bark 推送</div>
+ </div><div style="margin-top:10px"><button class="btn ghost" onclick="upSave()">保存</button><span id="usmsg" class="msg"></span></div></div>
+ <div class="card"><h2>更新日志</h2><pre id="uplog" class="muted" style="white-space:pre-wrap;margin:0;max-height:260px;overflow:auto"></pre></div>
+</section>
+</main></div>
+<script>
+const $=id=>document.getElementById(id);
+const KIND={fail:['失败','t-fail'],ok:['成功','t-ok'],brute:['暴力破解','t-fail'],ban:['封禁','t-ban'],unban:['解封','t-unban']};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function synoToken(){const u=new URLSearchParams(location.search).get('SynoToken');if(u)return u;try{return window.parent.SYNO.SDS.Session.SynoToken||''}catch(e){return ''}}
+async function api(p,d){const h={'X-SYNO-TOKEN':synoToken()};const o={headers:h,credentials:'same-origin'};if(d!==undefined){o.method='POST';h['Content-Type']='application/json';o.body=JSON.stringify(d)}
+const r=await fetch('index.cgi?a='+encodeURIComponent(p.replace('/api/',''))+'&SynoToken='+encodeURIComponent(synoToken()),o);
+if(r.status==401||r.status==403){$('deny').classList.remove('hide');$('app').classList.add('hide');throw 'login'}
+if(r.status==502){$('deny').textContent='NasGuard 后台服务未运行，请在套件中心启动 NasGuard。';$('deny').classList.remove('hide');$('app').classList.add('hide');throw 'down'}
+return r.json()}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x==b));['st','cf','ps','up'].forEach(p=>$('p-'+p).classList.toggle('hide',p!=b.dataset.p));if(b.dataset.p=='cf')loadCfg();if(b.dataset.p=='up')loadUp()});
+function bars(rows,keys,colors,labelKey,every,W){W=W||760;const H=180,pl=28,pb=20,pt=8,n=rows.length,cw=(W-pl)/n;
+let mx=1;rows.forEach(r=>mx=Math.max(mx,keys.reduce((a,k)=>a+(r[k]||0),0)));const st=mx<=4?1:Math.ceil(mx/4);mx=st*4;
+let g='';for(let i=0;i<=4;i++){const y=pt+(H-pt-pb)*(1-i/4);g+=`<line x1="${pl}" x2="${W}" y1="${y}" y2="${y}" stroke="#eef1f5"/><text x="${pl-4}" y="${y+3}" text-anchor="end">${st*i}</text>`}
+rows.forEach((r,i)=>{let y=H-pb;const x=pl+i*cw+cw*0.18,w=cw*0.64;keys.forEach((k,j)=>{const v=r[k]||0;if(!v)return;const h=(H-pt-pb)*v/mx;y-=h;g+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${colors[j]}"><title>${esc(r[labelKey])} ${k}: ${v}</title></rect>`});
+if(i%every==0)g+=`<text x="${x+w/2}" y="${H-6}" text-anchor="middle">${esc(r[labelKey])}</text>`});
+return `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg>`}
+async function loadSt(){const s=await api('/api/status');$('ver').textContent=' v'+s.version;$('host').textContent=s.host;const r=s.run,t=s.stats.today;
+$('run').innerHTML=`<div><span class="dot${r.enabled?'':' off'}"></span><b>${r.enabled?'运行中':'已暂停'}</b></div>
+<div class="kv">已运行<span>${esc(r.uptime)}</span></div><div class="kv">启动于<span>${esc(r.since)}</span></div>
+<div class="kv">防火墙<span>${r.firewall?'✅ 正常':'❌ 未生效'}</span></div><div class="kv">自动封禁<span>${r.ban_enabled?esc(r.rule):'关闭'}</span></div>
+<div class="kv">监控<span>${esc(s.sources.join('、')||'未发现日志')}</span></div><div class="kv">每日简报<span>${esc(r.report)}</span></div>`;
+const T=[['今日成功登录',t.ok,'#1f9d55',`${t.users} 个账户`],['今日失败登录',t.fail,'#d64545',`来自 ${t.fail_ips} 个 IP`],['暴力破解',t.brute,'#d64545','今日达到阈值的 IP'],['今日拉黑',t.ban,'#2b2f36','个 IP'],['当前封禁',s.bans.length,'#2f6fed','个 IP']];
+$('tiles').innerHTML=T.map(x=>`<div class="tile"><div class="l">${x[0]}</div><div class="n" style="color:${x[2]}">${x[1]}</div><div class="s">${x[3]}</div></div>`).join('');
+$('ch-h').innerHTML=bars(s.stats.hourly.map(h=>({...h,lb:h.h+'时'})),['fail','ok'],['#d64545','#1f9d55'],'lb',3,520);
+$('ch-d').innerHTML=bars(s.stats.daily,['fail','ok','ban'],['#d64545','#1f9d55','#2b2f36'],'day',1);
+const vm=Math.max(1,...s.stats.via.map(v=>v[1]));$('via').innerHTML=s.stats.via.map(v=>`<div class="bar"><span style="width:70px">${esc(v[0])}</span><div class="tr"><div class="fl" style="width:${v[1]*100/vm}%"></div></div><span>${v[1]}</span></div>`).join('')||'<p class="muted">今日没有失败登录</p>';
+$('top').innerHTML=s.stats.top.length?'<table>'+s.stats.top.map(x=>`<tr><td>${esc(x.ip)}${x.banned?' <span class="tag t-ban">已封</span>':''}<div class="muted">${esc(x.loc)}</div></td><td style="text-align:right">${x.n} 次</td></tr>`).join('')+'</table>':'<p class="muted">暂无</p>';
+$('bans').innerHTML=s.bans.map(b=>`<tr><td>${esc(b.ip)}</td><td>${esc(b.loc)}</td><td>${esc(b.left)}</td><td><a href="#" onclick="unban('${esc(b.ip)}');return false">解封</a></td></tr>`).join('')||'<tr><td colspan=4 class=muted>暂无</td></tr>';
+$('ev').innerHTML=s.events.slice(0,20).map(e=>{const k=KIND[e.kind]||[e.kind,''];return `<tr><td>${esc(e.time)}</td><td><span class="tag ${k[1]}">${k[0]}</span></td><td>${esc(e.ip)}</td><td>${esc(e.user)}</td><td>${esc(e.via)}</td></tr>`}).join('')||'<tr><td colspan=5 class=muted>暂无</td></tr>';
+$('pu').innerHTML=s.pushes.map(p=>`<tr><td>${esc(p.time)}</td><td>${esc(p.kind)}</td><td>${p.st=='ok'?'✅':'❌'}</td><td>${esc(p.title)}</td><td>${esc(p.body)}</td></tr>`).join('')||'<tr><td colspan=5 class=muted>暂无</td></tr>'}
+async function loadCfg(){const c=await api('/api/config');for(const k in c){const el=$(k);if(!el)continue;if(el.type=='checkbox')el.checked=!!c[k];else el.value=c[k]}}
+async function saveCfg(){const d={};document.querySelectorAll('#p-cf input,#p-cf select').forEach(el=>{if(!el.id)return;d[el.id]=el.type=='checkbox'?el.checked:el.value});const j=await api('/api/config',d);$('cmsg').textContent=j.ok?'已保存，立即生效':'保存失败'}
+async function act(a){$('tmsg').textContent='发送中…';const j=await api('/api/'+a,{});$('tmsg').textContent=(j.ok?'✅ ':'❌ ')+j.msg}
+async function unban(ip){if(ip=='all'&&!confirm('解封全部 IP？'))return;await api('/api/unban',{ip});loadSt()}
+async function manualBan(){const j=await api('/api/ban',{ip:$('bip').value.trim()});$('bmsg').textContent=j.ok?'已封禁':j.msg;loadSt()}
+
+function renderUp(u){const i=u.info||{};const st={running:'更新中…',installing:'正在安装，套件会自动重启',done:u.msg,fail:'❌ '+u.msg,idle:''}[u.state]||'';
+$('upinfo').innerHTML=`<div class="kv">当前版本<span>v${esc(u.current)}</span></div><div class="kv">最新版本<span>${i.latest?'v'+esc(i.latest)+(i.newer?' 🆕':' ✅'):'未知'}</span></div><div class="kv">发布日期<span>${esc(i.date||'-')}</span></div><div class="kv">上次检查<span>${esc(i.checked||'-')}${i.src?'（'+esc(i.src)+'）':''}</span></div><div class="kv">仓库<span>${esc(u.repo)}</span></div>`;
+$('upnotes').textContent=i.notes||'暂无';$('upbtn').disabled=!i.newer||['running','installing'].includes(u.state);$('upbtn').style.opacity=$('upbtn').disabled?.5:1;
+$('upmsg').textContent=st;$('uplog').textContent=(u.log||[]).join('\n');
+clearTimeout(window._ut);if(['running','installing'].includes(u.state))window._ut=setTimeout(loadUp,3000)}
+async function loadUp(){let u;try{u=await api('/api/update')}catch(e){if(e=='down'){$('deny').textContent='NasGuard 正在重启更新，稍等几秒…';setTimeout(()=>location.reload(),5000)}return}renderUp(u);const c=await api('/api/config');$('u_mirror').value=c.update_mirror||'auto';$('u_notify').checked=c.notify_update!==false}
+async function upCheck(){$('upmsg').textContent='检查中…';const j=await api('/api/updcheck',{});renderUp(j.info);if(!j.ok)$('upmsg').textContent='❌ 检查失败：GitHub 和镜像都连不上'}
+async function upGo(){if(!confirm('下载并安装新版本？安装时套件会自动重启。'))return;const j=await api('/api/upgrade',{});$('upmsg').textContent=j.msg;setTimeout(loadUp,1500)}
+async function upSave(){const j=await api('/api/config',{update_mirror:$('u_mirror').value,notify_update:$('u_notify').checked});$('usmsg').textContent=j.ok?'已保存':'保存失败'}
+function boot(){loadSt();clearInterval(window._t);window._t=setInterval(loadSt,15000)}
+$('app').classList.remove('hide');boot();
+</script>
+</body>
+</html>

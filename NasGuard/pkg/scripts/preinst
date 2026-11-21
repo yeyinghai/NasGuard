@@ -1,0 +1,5 @@
+#!/bin/sh
+for p in /usr/bin/python3 /bin/python3 /usr/local/bin/python3; do [ -x "$p" ] && exit 0; done
+command -v python3 >/dev/null 2>&1 && exit 0
+echo "未找到 python3，NasGuard 需要 DSM 自带的 python3。" > "$SYNOPKG_TEMP_LOGFILE"
+exit 1

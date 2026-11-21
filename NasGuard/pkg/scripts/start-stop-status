@@ -1,0 +1,8 @@
+#!/bin/sh
+H=/var/packages/NasGuard/target/bin/nasguard-helper
+case "$1" in
+  start)  "$H" start ;;
+  stop)   "$H" stop ;;
+  status) "$H" status || exit 3 ;;
+  *) exit 0 ;;
+esac

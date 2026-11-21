@@ -1,0 +1,24 @@
+{
+  "NasGuard.js": {
+    "SYNO.SDS.NasGuard.Application": {
+      "type": "app",
+      "title": "NasGuard",
+      "appWindow": "SYNO.SDS.NasGuard.MainWindow",
+      "desc": "登录监控与暴力破解封禁",
+      "icon": "images/icon_{0}.png",
+      "allowMultiInstance": false,
+      "allowStandalone": true,
+      "allUsers": false,
+      "grantPrivilege": "local",
+      "advanceGrantPrivilege": true,
+      "depend": ["SYNO.SDS.NasGuard.MainWindow"]
+    },
+    "SYNO.SDS.NasGuard.MainWindow": {
+      "type": "lib",
+      "title": "NasGuard",
+      "icon": "images/icon_{0}.png",
+      "depend": ["SYNO.SDS.NasGuard.Utils"]
+    },
+    "SYNO.SDS.NasGuard.Utils": []
+  }
+}
