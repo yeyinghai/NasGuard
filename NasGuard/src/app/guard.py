@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler
 import socketserver
 from socketserver import ThreadingMixIn
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 REPO = "yeyinghai/NasGuard"
 PKG = "/var/packages/NasGuard"
 VAR = os.environ.get("NASGUARD_VAR", PKG + "/var")
@@ -48,6 +48,7 @@ DEFAULTS = {
     "threshold": 5,
     "window": 10,                  # 分钟
     "cooldown": 60,                # 同一 IP 告警冷却（分钟）
+    "ok_merge": 30,                # 同一 IP + 用户 + 方式的登录成功，多少分钟内只记一次、推一次
     "lan_prefix": "192.168.",
     "notify_fail": True,
     "notify_ssh_ok": True,
@@ -471,8 +472,22 @@ def on_fail(ip, user, via):
         ip, geo(ip), CFG.get("window", 10), cnt, user or "-", bt))
 
 
+OK_SEEN = {}
+
+
 def on_ok(ip, user, via):
     if not ip or dedupe(("o", ip, user, via), 5):
+        return
+    # 有些客户端（脚本、监控、SFTP 面板）会反复新建 SSH 连接，合并成一次
+    merge = int(CFG.get("ok_merge", 30)) * 60
+    now = time.time()
+    key = (ip, user, (via or "").upper())
+    with LOCK:
+        for k in [k for k, t in OK_SEEN.items() if now - t > max(merge, 60)]:
+            OK_SEEN.pop(k, None)
+        last = OK_SEEN.get(key)
+        OK_SEEN[key] = now
+    if merge and last is not None and now - last < merge:
         return
     event("ok", ip, user, via)
     if ip in ("127.0.0.1", "::1"):
@@ -801,7 +816,7 @@ def config_public():
     return c
 
 
-INT_KEYS = {"threshold", "window", "cooldown", "ban_time", "report_hour", "report_minute"}
+INT_KEYS = {"threshold", "window", "cooldown", "ok_merge", "ban_time", "report_hour", "report_minute"}
 BOOL_KEYS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
 
 
@@ -1171,22 +1186,29 @@ def do_upgrade():
         return upd_log("❌ 所有线路下载失败，可到 GitHub Release 手动下载 spk 在套件中心安装")
     upd_log("下载完成 %d 字节，开始安装（套件会自动重启，窗口稍后刷新即可）" % os.path.getsize(f))
     save_json(UPD + "/pending.json", {"ver": ver, "notes": info.get("notes", "")[:600]})
-    sh = "/tmp/nasguard-upgrade.sh"
+    sh = UPD + "/upgrade.sh"
     with open(sh, "w") as fh:
-        fh.write("#!/bin/sh\nsleep 2\nL=%s/update.log\n"
+        fh.write("#!/bin/sh\n"
+                 "# 先把自己移出套件的 cgroup，否则停止套件时安装进程会被一起结束\n"
+                 "for f in /sys/fs/cgroup/*/cgroup.procs /sys/fs/cgroup/cgroup.procs; do\n"
+                 "  [ -w \"$f\" ] && echo $$ > \"$f\" 2>/dev/null\n"
+                 "done\n"
+                 "trap '' HUP TERM\n"
+                 "sleep 2\nL=%s/update.log\n"
                  "echo \"[$(date +%%T)] synopkg install …\" >> $L\n"
                  "/usr/syno/bin/synopkg install %s >> $L 2>&1\n"
                  "echo \"[$(date +%%T)] 安装命令结束（返回 $?）\" >> $L\n"
                  "/usr/syno/bin/synopkg start NasGuard >> $L 2>&1\n" % (UPD, f))
     os.chmod(sh, 0o755)
-    # 用 systemd-run 放到套件之外运行，避免停止套件时把安装进程一起结束
     cmd = ["/bin/sh", sh]
-    for sr in ("/usr/bin/systemd-run", "/bin/systemd-run"):
-        if os.path.exists(sr):
-            cmd = [sr, "--unit", "nasguard-upgrade-%d" % int(time.time()), "/bin/sh", sh]
-            break
+    if has_cmd("setsid"):
+        cmd = ["setsid"] + cmd
+    if has_cmd("nohup"):
+        cmd = ["nohup"] + cmd
+    upd_log("启动安装进程（已脱离套件）")
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
+                     preexec_fn=lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN))
     UPD_STATE.update(state="installing", msg="正在安装 v" + ver)
 
 
