@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """NasGuard: 群晖 DSM 登录监控、暴力破解自动封禁、Bark 推送、每日安全简报。"""
+import shutil
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from http.server import BaseHTTPRequestHandler
 import socketserver
 from socketserver import ThreadingMixIn
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 REPO = "yeyinghai/NasGuard"
 PKG = "/var/packages/NasGuard"
 VAR = os.environ.get("NASGUARD_VAR", PKG + "/var")
@@ -505,23 +506,38 @@ RE_CONN_OK = [
 ]
 
 
-def handle_conn_text(text, skip_ssh):
-    for rx in RE_CONN_FAIL:
-        m = rx.search(text)
-        if m:
-            user, ip, via = m.group(1), m.group(2), m.group(3)
-            if skip_ssh and via.upper() in ("SSH", "SFTP"):
-                return
-            on_fail(ip, user, via)
-            return
-    for rx in RE_CONN_OK:
-        m = rx.search(text)
-        if m:
-            user, ip, via = m.group(1), m.group(2), m.group(3)
-            if skip_ssh and via.upper() in ("SSH", "SFTP"):
-                return
-            on_ok(ip, user, via)
-            return
+RE_USER = re.compile(r"User \[(.*?)\]", re.I)
+RE_VIA = re.compile(r"via \[(.*?)\]", re.I)
+RE_TO = re.compile(r"(?:sign(?:ed)? in|log(?:ged)? in) to \[(.*?)\]", re.I)
+RE_FROM = re.compile(r"from \[(.*?)\]", re.I)
+GENERIC_VIA = ("PASSWORD", "OTP", "2FA", "PASSKEY", "SSO", "")
+
+
+def handle_conn_text(text, skip_ssh=False, ip_hint="", user_hint="", via_hint=""):
+    """解析 DSM 连接日志。先按已知句式匹配，再按关键字兜底，兼容不同 DSM 版本的写法。"""
+    low = text.lower()
+    if not (("log" in low or "sign" in low) and ("in" in low)):
+        return
+    ok = "success" in low
+    fail = (not ok) and ("fail" in low or "denied" in low or "incorrect" in low)
+    if not ok and not fail:
+        return
+    m = RE_USER.search(text)
+    user = (m.group(1) if m else "") or user_hint
+    m = RE_FROM.search(text)
+    ip = m.group(1) if m and valid_ip(m.group(1)) else ip_hint
+    via = ""
+    m = RE_VIA.search(text)
+    if m:
+        via = m.group(1)
+    if via.upper() in GENERIC_VIA:
+        m = RE_TO.search(text)
+        via = (m.group(1) if m else "") or via_hint or via or "DSM"
+    if skip_ssh and via.upper() in ("SSH", "SFTP"):
+        return
+    if not ip:
+        return
+    (on_ok if ok else on_fail)(ip, user, via)
 
 
 def handle_auth_line(line):
@@ -563,26 +579,75 @@ def tail_file(path, handler):
         STOP.wait(1)
 
 
+SNAP_SIG = None
+
+
+def open_conndb():
+    """套件以 package 用户运行，写不了 .SYNOCONNDB-shm，只读打开时看不到还在 WAL 里的新记录。
+    所以把库和 WAL 复制到自己的目录再打开（只在文件变化时复制）。"""
+    global SNAP_SIG
+    wal = CONNDB + "-wal"
+    sig = []
+    for f in (CONNDB, wal):
+        try:
+            st = os.stat(f)
+            sig.append((st.st_ino, st.st_size, st.st_mtime))
+        except FileNotFoundError:
+            sig.append(None)
+    snap = os.path.join(VAR, "conndb.snap")
+    if sig != SNAP_SIG or not os.path.exists(snap):
+        for suf in ("", "-wal", "-shm"):
+            try:
+                os.remove(snap + suf)
+            except FileNotFoundError:
+                pass
+        shutil.copyfile(CONNDB, snap)
+        if os.path.exists(wal):
+            shutil.copyfile(wal, snap + "-wal")
+        SNAP_SIG = sig
+    elif getattr(open_conndb, "seen", None) == sig:
+        return None
+    open_conndb.seen = sig
+    return sqlite3.connect(snap, timeout=5)
+
+
 def poll_conndb(skip_ssh):
     last = None
+    errs = 0
     while not STOP.is_set():
         try:
-            con = sqlite3.connect("file:%s?mode=ro" % CONNDB, uri=True, timeout=5)
+            con = open_conndb()
+            if con is None:
+                STOP.wait(3)
+                continue
             try:
                 tables = [r[0] for r in con.execute("select name from sqlite_master where type='table'")]
                 tbl = "logs" if "logs" in tables else (tables[0] if tables else None)
                 if tbl:
-                    if last is None:
-                        last = con.execute("select max(rowid) from %s" % tbl).fetchone()[0] or 0
+                    top = con.execute("select max(rowid) from %s" % tbl).fetchone()[0] or 0
+                    if last is None or top < last:
+                        if last is not None:
+                            log("连接日志库已重建，重新定位")
+                        last = top
                     rows = con.execute("select rowid, * from %s where rowid > ? order by rowid limit 500" % tbl,
                                        (last,)).fetchall()
                     for r in rows:
                         last = r[0]
-                        handle_conn_text(" ".join(str(x) for x in r[1:] if x is not None), skip_ssh)
+                        vals = [str(x) for x in r[1:] if x is not None]
+                        text = max(vals, key=lambda v: ("User [" in v, len(v))) if vals else ""
+                        ip_hint = next((v for v in vals if v != text and valid_ip(v)), "")
+                        via_hint = next((v for v in vals if v.upper() in ("SSH", "SFTP", "DSM", "HTTP/HTTPS",
+                                                                           "QUICKCONNECT", "WEB")), "")
+                        try:
+                            handle_conn_text(text, skip_ssh, ip_hint, "", via_hint)
+                        except Exception as e:
+                            log("处理连接日志出错:", e)
+                errs = 0
             finally:
                 con.close()
         except Exception as e:
-            if "no such table" not in str(e):
+            errs += 1
+            if errs in (1, 20) or errs % 600 == 0:
                 log("读取连接日志库出错:", e)
         STOP.wait(3)
 
@@ -1192,9 +1257,9 @@ def daemon():
     if use_auth:
         threads.append(threading.Thread(target=tail_file, args=(AUTHLOG, handle_auth_line), daemon=True))
     if os.path.exists(CONNDB):
-        threads.append(threading.Thread(target=poll_conndb, args=(use_auth,), daemon=True))
+        threads.append(threading.Thread(target=poll_conndb, args=(False,), daemon=True))
     else:
-        threads.append(threading.Thread(target=tail_file, args=(MESSAGES, lambda l: handle_conn_text(l, use_auth)),
+        threads.append(threading.Thread(target=tail_file, args=(MESSAGES, lambda l: handle_conn_text(l, False)),
                                         daemon=True))
     for t in threads:
         t.start()
