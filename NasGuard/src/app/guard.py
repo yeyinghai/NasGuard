@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler
 import socketserver
 from socketserver import ThreadingMixIn
 
-VERSION = "0.1.3"
+VERSION = "0.2.0"
 REPO = "yeyinghai/NasGuard"
 PKG = "/var/packages/NasGuard"
 VAR = os.environ.get("NASGUARD_VAR", PKG + "/var")
@@ -1222,6 +1222,23 @@ def do_upgrade():
 def after_start_update():
     """新版本启动后：确认升级结果并推送一次。"""
     p = load_json(UPD + "/pending.json", {})
+    os.makedirs(UPD, exist_ok=True)
+    # 手动安装或换了版本：清掉上个版本留下的更新日志，免得显示过时内容
+    ver_file = UPD + "/log_version"
+    try:
+        logged = open(ver_file).read().strip()
+    except Exception:
+        logged = ""
+    if logged != VERSION:
+        if not p:
+            open(UPD + "/update.log", "w").close()
+            for k in ("info.json",):
+                try:
+                    os.unlink(UPD + "/" + k)
+                except Exception:
+                    pass
+        with open(ver_file, "w") as fh:
+            fh.write(VERSION)
     if not p:
         return
     try:

@@ -1,2 +1,8 @@
 #!/bin/sh
+# 升级时保留设置；真正卸载时清除设置、推送地址和记录，避免重装后残留
+if [ "$SYNOPKG_PKG_STATUS" != "UPGRADE" ]; then
+  for d in /var/packages/NasGuard/var /volume*/@appdata/NasGuard; do
+    [ -d "$d" ] && rm -rf "$d"/* "$d"/.[!.]* 2>/dev/null
+  done
+fi
 exit 0
