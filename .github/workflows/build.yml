@@ -25,3 +25,9 @@ jobs:
         with:
           files: dist/*.spk
           body_path: dist/notes.md
+      - name: Purge jsDelivr cache
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          for h in purge.jsdelivr.net; do
+            curl -fsS "https://$h/gh/${{ github.repository }}@main/version.json" || true
+          done

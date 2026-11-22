@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler
 import socketserver
 from socketserver import ThreadingMixIn
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 REPO = "yeyinghai/NasGuard"
 PKG = "/var/packages/NasGuard"
 VAR = os.environ.get("NASGUARD_VAR", PKG + "/var")
@@ -1117,19 +1117,26 @@ def check_update():
                     "notes": (j.get("body") or "").replace("\r", ""), "spk": spk, "src": "GitHub"}
     except Exception as e:
         log("GitHub API 检查更新失败:", e)
+    # GitHub API 被限流时走镜像；CDN 可能缓存旧的 version.json，所以都问一遍、取最高版本
     if not info:
-        urls = ["https://cdn.jsdelivr.net/gh/%s@main/version.json" % REPO,
-                "https://fastly.jsdelivr.net/gh/%s@main/version.json" % REPO] + \
-               [pre(m) + "https://raw.githubusercontent.com/%s/main/version.json" % REPO for m in mirrors()]
+        ts = int(time.time())
+        urls = [pre(m) + "https://raw.githubusercontent.com/%s/main/version.json?t=%d" % (REPO, ts) for m in mirrors()] + \
+               ["https://cdn.jsdelivr.net/gh/%s@main/version.json" % REPO,
+                "https://fastly.jsdelivr.net/gh/%s@main/version.json" % REPO]
         for u in urls:
             try:
                 j = fetch(u)
                 if j.get("version"):
-                    info = {"latest": str(j["version"]), "date": j.get("date", ""), "notes": j.get("notes", ""),
+                    cand = {"latest": str(j["version"]), "date": j.get("date", ""), "notes": j.get("notes", ""),
                             "spk": j.get("spk", ""), "src": urllib.parse.urlsplit(u).netloc}
-                    break
+                    if not info or vtuple(cand["latest"]) > vtuple(info["latest"]):
+                        info = cand
             except Exception:
                 continue
+    # 不让缓存把已知的更高版本"降"回去
+    old = load_json(UPD + "/info.json", {})
+    if info and old.get("latest") and vtuple(old["latest"]) > vtuple(info["latest"]):
+        info = old
     if not info:
         return {"error": "GitHub 和所有镜像都连不上", "checked": time.strftime("%F %T")}
     if not info["spk"]:

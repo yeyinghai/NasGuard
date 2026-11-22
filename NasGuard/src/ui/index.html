@@ -141,7 +141,7 @@ async function act(a){$('tmsg').textContent='发送中…';const j=await api('/a
 async function unban(ip){if(ip=='all'&&!confirm('解封全部 IP？'))return;await api('/api/unban',{ip});loadSt()}
 async function manualBan(){const j=await api('/api/ban',{ip:$('bip').value.trim()});$('bmsg').textContent=j.ok?'已封禁':j.msg;loadSt()}
 
-function renderUp(u){const i=u.info||{};const st={running:'更新中…',installing:'正在安装，套件会自动重启',done:u.msg,fail:'❌ '+u.msg,idle:''}[u.state]||'';
+function renderUp(u){const i=u.info||{};const st={running:'更新中…',installing:'正在安装，套件会自动重启',done:(i.newer?'':u.msg),fail:'❌ '+u.msg,idle:''}[u.state]||'';
 $('upinfo').innerHTML=`<div class="kv">当前版本<span>v${esc(u.current)}</span></div><div class="kv">最新版本<span>${i.latest?'v'+esc(i.latest)+(i.newer?' 🆕':' ✅'):'未知'}</span></div><div class="kv">发布日期<span>${esc(i.date||'-')}</span></div><div class="kv">上次检查<span>${esc(i.checked||'-')}${i.src?'（'+esc(i.src)+'）':''}</span></div><div class="kv">仓库<span>${esc(u.repo)}</span></div>`;
 $('upnotes').textContent=i.notes||'暂无';$('upbtn').disabled=!i.newer||['running','installing'].includes(u.state);$('upbtn').style.opacity=$('upbtn').disabled?.5:1;
 $('upmsg').textContent=st;$('uplog').textContent=(u.log||[]).join('\n');
